@@ -28,6 +28,7 @@ python falling_sand.py
 | `S`               | Select sand mode                 |
 | `R`               | Select rock mode                 |
 | `E`               | Select erase mode                |
+| `W`               | Select water mode                |
 | Up / Down         | Increase or decrease brush size  |
 | Left / Right      | Decrease or increase sand volume |
 | `1` / `2`         | Decrease or increase game speed  |
@@ -38,4 +39,5 @@ python falling_sand.py
 
 - **Sand** falls downward and moves diagonally when the space below is blocked.
 - **Rock** stays in place and can be used as a solid obstacle.
+- **Water** falls downward, flows diagonally around obstacles, and spreads sideways.
 - **Erase** removes particles from the grid.

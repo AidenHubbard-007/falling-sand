@@ -51,11 +51,62 @@ class Grid:
             self.cells[row][column] = None
 
     def is_cell_empty(self, row: int, column: int) -> bool:
-        return (
+        if not (0 <= row < self.rows and 0 <= column < self.columns):
+            return False
+
+        return self.cells[row][column] is None
+
+    def is_cell_permeable(self, row: int, column: int) -> bool:
+        cell = self.get_cell(row, column)
+        return cell is not None and cell.permeable
+
+    def move_particle(
+        self, row: int, column: int, new_row: int, new_column: int
+    ) -> bool:
+        if (row, column) == (new_row, new_column):
+            return False
+
+        if not (
             0 <= row < self.rows
             and 0 <= column < self.columns
-            and self.cells[row][column] is None
-        )
+            and 0 <= new_row < self.rows
+            and 0 <= new_column < self.columns
+        ):
+            return False
+
+        particle = self.cells[row][column]
+        destination = self.cells[new_row][new_column]
+        if particle is None:
+            return False
+        if particle.fixed or (destination is not None and destination.fixed):
+            return False
+        if destination is not None:
+            if particle.permeable:
+                return False
+            if destination.permeable and new_row == row + 1 and new_column == column:
+                self.cells[row][column], self.cells[new_row][new_column] = (
+                    destination,
+                    particle,
+                )
+                return True
+            if not self.push_up(new_row, new_column):
+                return False
+
+        self.cells[new_row][new_column] = particle
+        self.cells[row][column] = None
+        return True
+
+    def push_up(self, row: int, column: int) -> bool:
+        if row == 0:
+            return False
+        above = self.cells[row - 1][column]
+        if above is not None and (
+            not above.permeable or not self.push_up(row - 1, column)
+        ):
+            return False
+        self.cells[row - 1][column] = self.cells[row][column]
+        self.cells[row][column] = None
+        return True
 
     def set_cell(self, row: int, column: int, particle):
         if 0 <= row < self.rows and 0 <= column < self.columns:
@@ -74,6 +125,10 @@ class Grid:
 
 class Particle:
     """Parent particle class"""
+
+    def __init__(self) -> None:
+        self.permeable = False
+        self.fixed = False
 
     color: tuple[int, int, int]
 
@@ -95,11 +150,13 @@ class SandParticle(Particle):
     """Sand Particle behavior"""
 
     def __init__(self) -> None:
+        super().__init__()
         self.color = self.random_color((0.1, 0.12), (0.5, 0.7), (0.7, 0.9))
 
     def update(self, grid: Grid, row: int, column: int) -> tuple[int, int]:
         # check if cell below is empty
-        if grid.is_cell_empty(row + 1, column):
+        below = grid.get_cell(row + 1, column)
+        if below is None or grid.is_cell_permeable(row + 1, column):
             return row + 1, column
         else:
             # randomize left or right
@@ -108,7 +165,8 @@ class SandParticle(Particle):
             # place left or right
             for offset in offsets:
                 new_column = column + offset
-                if grid.is_cell_empty(row + 1, new_column):
+                diagonal = grid.get_cell(row + 1, new_column)
+                if diagonal is None or grid.is_cell_permeable(row + 1, new_column):
                     return (row + 1, new_column)
         return row, column
 
@@ -121,7 +179,48 @@ class RockParticle(Particle):
     """
 
     def __init__(self) -> None:
+        super().__init__()
         self.color = self.random_color((0.0, 0.1), (0.1, 0.3), (0.3, 0.5))
+        self.fixed = True
+
+
+class WaterParticle(Particle):
+    """Water Behavior
+
+    Args:
+        Particle (class): Parent Class
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.color = self.random_color((0.58, 0.63), (0.65, 0.78), (0.85, 0.95))
+        self.permeable = True
+
+    def update(self, grid: Grid, row: int, column: int) -> tuple[int, int]:
+        """if it can move down, it moves down, else move left or right.
+
+        Args:
+            grid (Grid): game grid
+            row (int): current y
+            column (int): current x pos
+
+        Returns:
+            tuple[int, int]: New Water Particle Position
+        """
+        if grid.is_cell_empty(row + 1, column):
+            return row + 1, column
+
+        offsets = [-1, 1]
+        random.shuffle(offsets)
+        for offset in offsets:
+            if grid.is_cell_empty(row + 1, column + offset):
+                return row + 1, column + offset
+
+        for offset in offsets:
+            if grid.is_cell_empty(row, column + offset):
+                return row, column + offset
+
+        return row, column
 
 
 class Mode:
@@ -130,6 +229,7 @@ class Mode:
     ERASE = 0
     SAND = 1
     ROCK = 2
+    WATER = 3
 
 
 class Simulation:
@@ -157,7 +257,7 @@ class Simulation:
             "",
             "Controls:",
             "1/2: Game Speed",
-            "S: Sand   R: Rock   E: Erase",
+            "S: Sand   R: Rock   E: Erase   W: Water",
             "Up/Down: Brush Size",
             "Left/Right: Sand Volume",
             "Left mouse: Draw or Erase",
@@ -186,16 +286,19 @@ class Simulation:
                 self.grid.add_particle(row, column, SandParticle())
         elif self.mode == Mode.ROCK:
             self.grid.add_particle(row, column, RockParticle())
+        elif self.mode == Mode.WATER:
+            self.grid.add_particle(row, column, WaterParticle())
 
     def remove_particle(self, row: int, column: int):
         self.grid.remove_particle(row, column)
 
     def update(self):
+        movable_particles = (SandParticle, WaterParticle)
         positions_by_row: dict[int, list[int]] = {}
         for row in range(self.grid.rows):
             for column in range(self.grid.columns):
                 particle = self.grid.get_cell(row, column)
-                if isinstance(particle, SandParticle):
+                if isinstance(particle, movable_particles):
                     positions_by_row.setdefault(row, []).append(column)
 
         # starts from bottom
@@ -204,12 +307,11 @@ class Simulation:
             columns.sort(reverse=(row % 2 != 0))
             for column in columns:
                 particle = self.grid.get_cell(row, column)
-                if not isinstance(particle, SandParticle):
+                if not isinstance(particle, movable_particles):
                     continue
                 new_pos = particle.update(self.grid, row, column)
                 if new_pos != (row, column):
-                    self.grid.set_cell(new_pos[0], new_pos[1], particle)
-                    self.grid.remove_particle(row, column)
+                    self.grid.move_particle(row, column, new_pos[0], new_pos[1])
 
     def restart(self):
         self.grid.clear()
@@ -236,6 +338,8 @@ class Simulation:
         elif event.key == pygame.K_e:
             print("Eraser Mode")
             self.mode = Mode.ERASE
+        elif event.key == pygame.K_w:
+            self.mode = Mode.WATER
         elif event.key == pygame.K_UP:
             self.brush_size += 1
         elif event.key == pygame.K_DOWN and self.brush_size >= 2:
@@ -285,6 +389,8 @@ class Simulation:
             color = (185, 142, 66)
         elif self.mode == Mode.ERASE:
             color = (255, 55, 55)
+        elif self.mode == Mode.WATER:
+            color = (0, 0, 255)
 
         pygame.draw.rect(
             window,
